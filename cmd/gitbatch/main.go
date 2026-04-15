@@ -28,22 +28,27 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "gitbatch [flags] [directory]",
-	Short: "Batch-update multiple git repositories in parallel",
+	Use:   "gitbatch",
+	Short: "Batch operations on multiple git repositories",
 	Long: `gitbatch discovers git repositories under a root directory and
-fetches/fast-forward merges them all in parallel. For repos with dirty
-worktrees it can stash changes, pull, and reapply the stash.`,
-	Args:          cobra.MaximumNArgs(1),
+runs operations on them in parallel.`,
 	SilenceErrors: true,
 	SilenceUsage:  true,
+}
+
+var syncCmd = &cobra.Command{
+	Use:   "sync [directory]",
+	Short: "Fetch and fast-forward merge all repositories",
+	Long: `Discovers git repositories under the given directory and
+fetches/fast-forward merges them all in parallel. For repos with dirty
+worktrees it can stash changes, pull, and reapply the stash.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// 1. Resolve directory.
 		dir, err := resolveDir(args)
 		if err != nil {
 			return err
 		}
 
-		// 2. Discover repositories.
 		repos, err := git.Discover(dir, depth)
 		if err != nil {
 			return err
@@ -62,20 +67,17 @@ worktrees it can stash changes, pull, and reapply the stash.`,
 		}
 		fmt.Fprintf(os.Stderr, "Found %d %s in %s\n", len(repos), noun, dir)
 
-		// 3. Set up progress indicator.
 		counter := progress.NewCounter(
 			fmt.Sprintf("Updating %d repos", len(repos)),
 			format,
 		)
 
-		// 4. Run the parallel updater.
 		results := runner.Run(cmd.Context(), repos, jobs, noStash, func(done int) {
 			counter.Update(done)
 		})
 
 		counter.Finish()
 
-		// 5. Output results.
 		if output.IsJSON(format) {
 			if err := output.PrintJSON(results); err != nil {
 				return fmt.Errorf("writing JSON output: %w", err)
@@ -91,7 +93,6 @@ worktrees it can stash changes, pull, and reapply the stash.`,
 			}
 		}
 
-		// 6. Exit code: 1 if any failed or conflicted.
 		for _, r := range results {
 			if r.Status == runner.StatusFailed || r.Status == runner.StatusConflict {
 				os.Exit(1)
@@ -137,10 +138,12 @@ func init() {
 	rootCmd.AddCommand(version.NewCommand(info))
 	version.SetupFlag(rootCmd, info)
 
-	// Custom flags.
-	rootCmd.Flags().IntVarP(&jobs, "jobs", "j", 6, "Max parallel operations")
-	rootCmd.Flags().IntVar(&depth, "depth", 3, "Max directory depth for discovery")
-	rootCmd.Flags().BoolVar(&noStash, "no-stash", false, "Skip repos with dirty worktrees instead of stashing")
+	// Sync command flags.
+	syncCmd.Flags().IntVarP(&jobs, "jobs", "j", 6, "Max parallel operations")
+	syncCmd.Flags().IntVar(&depth, "depth", 3, "Max directory depth for discovery")
+	syncCmd.Flags().BoolVar(&noStash, "no-stash", false, "Skip repos with dirty worktrees instead of stashing")
+
+	rootCmd.AddCommand(syncCmd)
 }
 
 func main() {
