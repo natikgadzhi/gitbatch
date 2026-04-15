@@ -1,7 +1,7 @@
 .PHONY: build test vet clean
 
 BINARY_NAME := gitbatch
-BUILD_DIR := .
+BUILD_DIR := build
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
@@ -11,6 +11,7 @@ LDFLAGS := -X main.Version=$(VERSION) \
            -X main.Date=$(DATE)
 
 build:
+	@mkdir -p $(BUILD_DIR)
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitbatch
 
 test:

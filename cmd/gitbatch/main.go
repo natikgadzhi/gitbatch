@@ -56,7 +56,11 @@ worktrees it can stash changes, pull, and reapply the stash.`,
 			return nil
 		}
 
-		fmt.Fprintf(os.Stderr, "Found %d repositories in %s\n", len(repos), dir)
+		noun := "repositories"
+		if len(repos) == 1 {
+			noun = "repository"
+		}
+		fmt.Fprintf(os.Stderr, "Found %d %s in %s\n", len(repos), noun, dir)
 
 		// 3. Set up progress indicator.
 		counter := progress.NewCounter(
