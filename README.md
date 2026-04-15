@@ -48,6 +48,25 @@ gitbatch sync [flags] [directory]
   -h, --help           Show help
 ```
 
+### `gitbatch schedule`
+
+Set up a macOS LaunchAgent to run sync automatically.
+
+```
+gitbatch schedule set [flags] [directory]
+gitbatch schedule show
+gitbatch schedule remove
+gitbatch schedule run
+gitbatch schedule logs
+```
+
+```
+      --time <HH:MM>   Run daily at a specific time (default: 08:00)
+      --every <dur>    Run on an interval (e.g. 4h, 30m, 1h30m)
+```
+
+`--time` and `--every` are mutually exclusive.
+
 ### Examples
 
 ```bash
@@ -59,6 +78,18 @@ gitbatch sync -j 12 --depth 5 ~/projects
 
 # Output JSON (useful for cron / piping)
 gitbatch sync -o json ~/src
+
+# Sync ~/src every morning at 8am
+gitbatch schedule set --time 08:00 ~/src
+
+# Sync every 4 hours
+gitbatch schedule set --every 4h ~/src
+
+# Check schedule status
+gitbatch schedule show
+
+# View recent logs
+gitbatch schedule logs
 ```
 
 ## License
