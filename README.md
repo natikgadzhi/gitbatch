@@ -4,6 +4,12 @@ A simple CLI tool that batch-updates multiple git repositories in parallel.
 
 ## Install
 
+### Homebrew
+
+```bash
+brew install natikgadzhi/taps/gitbatch
+```
+
 ### From source
 
 ```bash
