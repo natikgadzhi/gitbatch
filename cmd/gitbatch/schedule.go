@@ -24,15 +24,34 @@ var (
 
 var scheduleCmd = &cobra.Command{
 	Use:   "schedule",
-	Short: "Manage scheduled sync jobs via macOS LaunchAgent",
+	Short: "Set up automatic sync on a schedule (macOS)",
+	Long: `Manage a macOS LaunchAgent that runs "gitbatch sync" automatically.
+
+The schedule survives reboots. If your laptop is asleep at the scheduled
+time, the sync runs automatically when you open the lid.
+
+Examples:
+  gitbatch schedule set --time 8am ~/src
+  gitbatch schedule set --every 4h ~/src
+  gitbatch schedule show
+  gitbatch schedule logs`,
 }
 
 var scheduleSetCmd = &cobra.Command{
 	Use:   "set [directory]",
-	Short: "Create or update a scheduled sync",
-	Long: `Sets up a macOS LaunchAgent to run "gitbatch sync" on a schedule.
-Use --time for daily at a specific time, or --every for an interval.
-These flags are mutually exclusive.`,
+	Short: "Create or update the sync schedule",
+	Long: `Sets up a macOS LaunchAgent to run "gitbatch sync" automatically.
+
+Use --time for a daily schedule or --every for a recurring interval.
+These are mutually exclusive; if neither is given, defaults to --time 8am.
+
+Sync flags (--jobs, --depth, --no-stash) are saved into the schedule
+and used on every run.
+
+Examples:
+  gitbatch schedule set --time 8am ~/src
+  gitbatch schedule set --time 2:30pm -j 12 ~/projects
+  gitbatch schedule set --every 4h --no-stash ~/src`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if scheduleTime != "" && scheduleEvery != "" {
@@ -101,7 +120,7 @@ These flags are mutually exclusive.`,
 
 var scheduleShowCmd = &cobra.Command{
 	Use:   "show",
-	Short: "Show the current schedule",
+	Short: "Show the current schedule, directory, and status",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		info, err := schedule.Show()
@@ -133,7 +152,7 @@ var scheduleShowCmd = &cobra.Command{
 
 var scheduleRemoveCmd = &cobra.Command{
 	Use:   "remove",
-	Short: "Remove the scheduled sync",
+	Short: "Unload and delete the scheduled sync",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := schedule.Remove(); err != nil {
@@ -146,7 +165,7 @@ var scheduleRemoveCmd = &cobra.Command{
 
 var scheduleRunCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Trigger the scheduled sync immediately",
+	Short: "Trigger the scheduled sync now (runs in background via launchd)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := schedule.Run(); err != nil {
@@ -159,7 +178,7 @@ var scheduleRunCmd = &cobra.Command{
 
 var scheduleLogsCmd = &cobra.Command{
 	Use:   "logs",
-	Short: "Show recent sync logs",
+	Short: "Tail the last 50 lines of scheduled sync output",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logPath := schedule.StdoutLogPath()

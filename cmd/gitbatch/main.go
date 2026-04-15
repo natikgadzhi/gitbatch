@@ -29,19 +29,32 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "gitbatch",
-	Short: "Batch operations on multiple git repositories",
-	Long: `gitbatch discovers git repositories under a root directory and
-runs operations on them in parallel.`,
+	Short: "Batch-update git repositories in parallel",
+	Long: `gitbatch discovers git repositories under a directory and pulls them
+all in parallel. It handles dirty worktrees by stashing, pulling, and
+reapplying changes automatically.
+
+Examples:
+  gitbatch sync ~/src/myorg
+  gitbatch sync -j 12 --depth 5 ~/projects
+  gitbatch schedule set --time 8am ~/src/myorg`,
 	SilenceErrors: true,
 	SilenceUsage:  true,
 }
 
 var syncCmd = &cobra.Command{
 	Use:   "sync [directory]",
-	Short: "Fetch and fast-forward merge all repositories",
-	Long: `Discovers git repositories under the given directory and
-fetches/fast-forward merges them all in parallel. For repos with dirty
-worktrees it can stash changes, pull, and reapply the stash.`,
+	Short: "Fetch and fast-forward merge all repositories in parallel",
+	Long: `Discovers git repositories under the given directory (default: current
+directory) and fetches/fast-forward merges them all in parallel.
+
+For repos with uncommitted changes, gitbatch stashes them before pulling
+and reapplies them after. Use --no-stash to skip dirty repos instead.
+
+Examples:
+  gitbatch sync ~/src
+  gitbatch sync -j 12 --depth 5 ~/projects
+  gitbatch sync --no-stash ~/src`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, err := resolveDir(args)
