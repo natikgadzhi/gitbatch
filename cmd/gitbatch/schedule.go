@@ -92,7 +92,7 @@ These flags are mutually exclusive.`,
 		if scheduleEvery != "" {
 			fmt.Fprintf(os.Stderr, "Schedule set: sync %s every %s\n", dir, scheduleEvery)
 		} else {
-			fmt.Fprintf(os.Stderr, "Schedule set: sync %s daily at %s\n", dir, scheduleTime)
+			fmt.Fprintf(os.Stderr, "Schedule set: sync %s daily at %s\n", dir, formatTime(cfg.Hour, cfg.Minute))
 		}
 		fmt.Fprintf(os.Stderr, "Logs: %s\n", schedule.StdoutLogPath())
 		return nil
@@ -176,7 +176,7 @@ var scheduleLogsCmd = &cobra.Command{
 }
 
 func init() {
-	scheduleSetCmd.Flags().StringVar(&scheduleTime, "time", "", "Time to run daily (HH:MM, e.g. 08:00)")
+	scheduleSetCmd.Flags().StringVar(&scheduleTime, "time", "", "Time to run daily (e.g. 8am, 2:30pm, 14:30)")
 	scheduleSetCmd.Flags().StringVar(&scheduleEvery, "every", "", "Run every interval (e.g. 4h, 30m, 1h30m)")
 	scheduleSetCmd.Flags().IntVarP(&scheduleJobs, "jobs", "j", 6, "Max parallel operations for sync")
 	scheduleSetCmd.Flags().IntVar(&scheduleDepth, "depth", 3, "Max directory depth for discovery")
@@ -191,21 +191,79 @@ func init() {
 	rootCmd.AddCommand(scheduleCmd)
 }
 
-// parseTime parses "HH:MM" into hour and minute.
+// parseTime parses time strings in various formats:
+//
+//	"8am", "8pm", "8:30am", "2:30pm", "08:00", "14:30"
 func parseTime(s string) (int, int, error) {
-	parts := strings.SplitN(s, ":", 2)
-	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("invalid time format %q — expected HH:MM", s)
+	lower := strings.ToLower(strings.TrimSpace(s))
+
+	// Try 12-hour formats: 8am, 8pm, 8:30am, 2:30pm
+	for _, suffix := range []string{"am", "pm"} {
+		if strings.HasSuffix(lower, suffix) {
+			body := strings.TrimSuffix(lower, suffix)
+			hour, minute, err := parseHourMinute(body)
+			if err != nil {
+				return 0, 0, fmt.Errorf("invalid time %q: %w", s, err)
+			}
+			if hour < 1 || hour > 12 {
+				return 0, 0, fmt.Errorf("invalid hour in %q — must be 1-12 with am/pm", s)
+			}
+			if suffix == "am" && hour == 12 {
+				hour = 0
+			} else if suffix == "pm" && hour != 12 {
+				hour += 12
+			}
+			return hour, minute, nil
+		}
 	}
-	hour, err := strconv.Atoi(parts[0])
-	if err != nil || hour < 0 || hour > 23 {
+
+	// 24-hour format: 08:00, 14:30
+	hour, minute, err := parseHourMinute(lower)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid time %q — expected HH:MM, 8am, 2:30pm, etc.", s)
+	}
+	if hour < 0 || hour > 23 {
 		return 0, 0, fmt.Errorf("invalid hour in %q — must be 0-23", s)
 	}
-	minute, err := strconv.Atoi(parts[1])
-	if err != nil || minute < 0 || minute > 59 {
-		return 0, 0, fmt.Errorf("invalid minute in %q — must be 0-59", s)
-	}
 	return hour, minute, nil
+}
+
+func formatTime(hour, minute int) string {
+	suffix := "am"
+	h := hour
+	if h == 0 {
+		h = 12
+	} else if h == 12 {
+		suffix = "pm"
+	} else if h > 12 {
+		h -= 12
+		suffix = "pm"
+	}
+	if minute == 0 {
+		return fmt.Sprintf("%d%s", h, suffix)
+	}
+	return fmt.Sprintf("%d:%02d%s", h, minute, suffix)
+}
+
+func parseHourMinute(s string) (int, int, error) {
+	if strings.Contains(s, ":") {
+		parts := strings.SplitN(s, ":", 2)
+		hour, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid hour")
+		}
+		minute, err := strconv.Atoi(parts[1])
+		if err != nil || minute < 0 || minute > 59 {
+			return 0, 0, fmt.Errorf("invalid minute — must be 0-59")
+		}
+		return hour, minute, nil
+	}
+	// Just an hour, no minutes: "8", "14"
+	hour, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid hour")
+	}
+	return hour, 0, nil
 }
 
 // parseInterval parses a duration string like "4h", "30m", "1h30m" into seconds.

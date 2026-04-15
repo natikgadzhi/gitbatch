@@ -289,8 +289,25 @@ func extractSchedule(content string) string {
 		}
 	}
 	if hour >= 0 && minute >= 0 {
-		return fmt.Sprintf("daily at %02d:%02d", hour, minute)
+		return fmt.Sprintf("daily at %s", formatTime12h(hour, minute))
 	}
 
 	return "unknown"
+}
+
+func formatTime12h(hour, minute int) string {
+	suffix := "am"
+	h := hour
+	if h == 0 {
+		h = 12
+	} else if h == 12 {
+		suffix = "pm"
+	} else if h > 12 {
+		h -= 12
+		suffix = "pm"
+	}
+	if minute == 0 {
+		return fmt.Sprintf("%d%s", h, suffix)
+	}
+	return fmt.Sprintf("%d:%02d%s", h, minute, suffix)
 }
