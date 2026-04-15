@@ -22,6 +22,18 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+brews:
+  - repository:
+      owner: natikgadzhi
+      name: homebrew-taps
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/natikgadzhi/gitbatch"
+    description: "Batch-update git repositories in parallel"
+    license: "MIT"
+    test: |
+      system "#{bin}/gitbatch", "--help"
+
 changelog:
   sort: asc
   filters:
