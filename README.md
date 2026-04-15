@@ -61,11 +61,16 @@ gitbatch schedule logs
 ```
 
 ```
-      --time <HH:MM>   Run daily at a specific time (default: 08:00)
+      --time <time>    Run daily at a specific time (e.g. 8am, 2:30pm, 14:30)
       --every <dur>    Run on an interval (e.g. 4h, 30m, 1h30m)
+  -j, --jobs <n>       Max parallel operations (default: 6)
+      --depth <n>      Max directory depth for discovery (default: 3)
+      --no-stash       Skip repos with dirty worktrees instead of stashing
 ```
 
-`--time` and `--every` are mutually exclusive.
+`--time` and `--every` are mutually exclusive. If neither is specified, defaults to `--time 8am`.
+
+**Sleep/wake behavior:** The schedule uses macOS launchd, which catches up on missed runs. If your laptop is asleep at the scheduled time, the sync runs automatically when you open the lid.
 
 ### Examples
 
@@ -80,7 +85,7 @@ gitbatch sync -j 12 --depth 5 ~/projects
 gitbatch sync -o json ~/src
 
 # Sync ~/src every morning at 8am
-gitbatch schedule set --time 08:00 ~/src
+gitbatch schedule set --time 8am ~/src
 
 # Sync every 4 hours
 gitbatch schedule set --every 4h ~/src
