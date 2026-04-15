@@ -15,8 +15,11 @@ import (
 )
 
 var (
-	scheduleTime  string
-	scheduleEvery string
+	scheduleTime    string
+	scheduleEvery   string
+	scheduleJobs    int
+	scheduleDepth   int
+	scheduleNoStash bool
 )
 
 var scheduleCmd = &cobra.Command{
@@ -49,9 +52,22 @@ These flags are mutually exclusive.`,
 			return err
 		}
 
+		// Build sync flags to pass through.
+		var syncArgs []string
+		if scheduleJobs != 6 {
+			syncArgs = append(syncArgs, "-j", strconv.Itoa(scheduleJobs))
+		}
+		if scheduleDepth != 3 {
+			syncArgs = append(syncArgs, "--depth", strconv.Itoa(scheduleDepth))
+		}
+		if scheduleNoStash {
+			syncArgs = append(syncArgs, "--no-stash")
+		}
+
 		cfg := schedule.Config{
 			Binary:    binary,
 			Directory: dir,
+			SyncArgs:  syncArgs,
 		}
 
 		if scheduleEvery != "" {
@@ -106,6 +122,9 @@ var scheduleShowCmd = &cobra.Command{
 		fmt.Printf("Schedule:  %s\n", info.Schedule)
 		fmt.Printf("Directory: %s\n", info.Directory)
 		fmt.Printf("Binary:    %s\n", info.Binary)
+		if len(info.SyncArgs) > 0 {
+			fmt.Printf("Sync args: %s\n", strings.Join(info.SyncArgs, " "))
+		}
 		fmt.Printf("Loaded:    %s\n", loaded)
 		fmt.Printf("Logs:      %s\n", info.StdoutLog)
 		return nil
@@ -159,6 +178,9 @@ var scheduleLogsCmd = &cobra.Command{
 func init() {
 	scheduleSetCmd.Flags().StringVar(&scheduleTime, "time", "", "Time to run daily (HH:MM, e.g. 08:00)")
 	scheduleSetCmd.Flags().StringVar(&scheduleEvery, "every", "", "Run every interval (e.g. 4h, 30m, 1h30m)")
+	scheduleSetCmd.Flags().IntVarP(&scheduleJobs, "jobs", "j", 6, "Max parallel operations for sync")
+	scheduleSetCmd.Flags().IntVar(&scheduleDepth, "depth", 3, "Max directory depth for discovery")
+	scheduleSetCmd.Flags().BoolVar(&scheduleNoStash, "no-stash", false, "Skip repos with dirty worktrees instead of stashing")
 
 	scheduleCmd.AddCommand(scheduleSetCmd)
 	scheduleCmd.AddCommand(scheduleShowCmd)

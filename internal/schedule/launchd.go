@@ -9,33 +9,7 @@ import (
 	"time"
 )
 
-const (
-	label    = "com.natikgadzhi.gitbatch"
-	plistFmt = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>%s</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>%s</string>
-        <string>sync</string>
-        <string>-o</string>
-        <string>json</string>
-        <string>%s</string>
-    </array>
-%s
-    <key>StandardOutPath</key>
-    <string>%s</string>
-    <key>StandardErrorPath</key>
-    <string>%s</string>
-    <key>RunAtLoad</key>
-    <false/>
-</dict>
-</plist>
-`
-)
+const label = "com.natikgadzhi.gitbatch"
 
 // Config holds the schedule configuration.
 type Config struct {
@@ -45,17 +19,66 @@ type Config struct {
 	Minute    int
 	// IntervalSeconds is used for --every; if > 0, it takes precedence over Hour/Minute.
 	IntervalSeconds int
+	// SyncArgs are additional flags passed to "gitbatch sync" (e.g. "-j", "12", "--depth", "5").
+	SyncArgs []string
+}
+
+func buildPlist(cfg Config) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>`)
+	b.WriteString(label)
+	b.WriteString(`</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>`)
+	b.WriteString(cfg.Binary)
+	b.WriteString(`</string>
+        <string>sync</string>
+        <string>-o</string>
+        <string>json</string>`)
+	for _, arg := range cfg.SyncArgs {
+		b.WriteString("\n        <string>")
+		b.WriteString(arg)
+		b.WriteString("</string>")
+	}
+	b.WriteString("\n        <string>")
+	b.WriteString(cfg.Directory)
+	b.WriteString(`</string>
+    </array>
+`)
+	b.WriteString(scheduleBlock(cfg))
+	b.WriteString(`
+    <key>StandardOutPath</key>
+    <string>`)
+	b.WriteString(StdoutLogPath())
+	b.WriteString(`</string>
+    <key>StandardErrorPath</key>
+    <string>`)
+	b.WriteString(StderrLogPath())
+	b.WriteString(`</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
+`)
+	return b.String()
 }
 
 // Info holds parsed schedule information for display.
 type Info struct {
-	Label     string `json:"label"`
-	Binary    string `json:"binary"`
-	Directory string `json:"directory"`
-	Schedule  string `json:"schedule"`
-	StdoutLog string `json:"stdout_log"`
-	StderrLog string `json:"stderr_log"`
-	Loaded    bool   `json:"loaded"`
+	Label     string   `json:"label"`
+	Binary    string   `json:"binary"`
+	Directory string   `json:"directory"`
+	SyncArgs  []string `json:"sync_args,omitempty"`
+	Schedule  string   `json:"schedule"`
+	StdoutLog string   `json:"stdout_log"`
+	StderrLog string   `json:"stderr_log"`
+	Loaded    bool     `json:"loaded"`
 }
 
 func plistPath() string {
@@ -105,14 +128,7 @@ func Set(cfg Config) error {
 		return fmt.Errorf("creating log directory: %w", err)
 	}
 
-	content := fmt.Sprintf(plistFmt,
-		label,
-		cfg.Binary,
-		cfg.Directory,
-		scheduleBlock(cfg),
-		StdoutLogPath(),
-		StderrLogPath(),
-	)
+	content := buildPlist(cfg)
 
 	if err := os.WriteFile(plistPath(), []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing plist: %w", err)
@@ -158,10 +174,12 @@ func Show() (*Info, error) {
 	}
 
 	content := string(data)
+	progArgs := extractProgramArguments(content)
 	info := &Info{
 		Label:     label,
-		Binary:    extractPlistString(content, "ProgramArguments"),
-		Directory: extractDirectory(content),
+		Binary:    progArgs.binary,
+		Directory: progArgs.directory,
+		SyncArgs:  progArgs.syncArgs,
 		Schedule:  extractSchedule(content),
 		StdoutLog: StdoutLogPath(),
 		StderrLog: StderrLogPath(),
@@ -192,11 +210,17 @@ func isLoaded() bool {
 	return cmd.Run() == nil
 }
 
-// extractDirectory pulls the directory argument from the plist (last string in ProgramArguments).
-func extractDirectory(content string) string {
-	// The directory is the last <string> in ProgramArguments array.
+type programArgs struct {
+	binary    string
+	directory string
+	syncArgs  []string
+}
+
+// extractProgramArguments parses the ProgramArguments array from the plist.
+// Expected order: binary, "sync", "-o", "json", [syncArgs...], directory
+func extractProgramArguments(content string) programArgs {
 	inArray := false
-	last := ""
+	var args []string
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "<key>ProgramArguments</key>" {
@@ -207,26 +231,24 @@ func extractDirectory(content string) string {
 			break
 		}
 		if inArray && strings.HasPrefix(trimmed, "<string>") && strings.HasSuffix(trimmed, "</string>") {
-			last = trimmed[len("<string>") : len(trimmed)-len("</string>")]
+			args = append(args, trimmed[len("<string>"):len(trimmed)-len("</string>")])
 		}
 	}
-	return last
-}
 
-// extractPlistString pulls the first <string> value after ProgramArguments (the binary path).
-func extractPlistString(content, _ string) string {
-	inArray := false
-	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "<key>ProgramArguments</key>" {
-			inArray = true
-			continue
-		}
-		if inArray && strings.HasPrefix(trimmed, "<string>") && strings.HasSuffix(trimmed, "</string>") {
-			return trimmed[len("<string>") : len(trimmed)-len("</string>")]
-		}
+	var result programArgs
+	if len(args) == 0 {
+		return result
 	}
-	return ""
+	result.binary = args[0]
+	// Last arg is always the directory.
+	if len(args) > 1 {
+		result.directory = args[len(args)-1]
+	}
+	// Args between the fixed prefix ("binary", "sync", "-o", "json") and the directory are sync args.
+	if len(args) > 5 {
+		result.syncArgs = args[4 : len(args)-1]
+	}
+	return result
 }
 
 // extractSchedule returns a human-readable schedule description.
