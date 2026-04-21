@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/natikgadzhi/cli-kit/output"
+	"github.com/natikgadzhi/cli-kit/table"
 	"github.com/natikgadzhi/gitbatch/internal/schedule"
 	"github.com/spf13/cobra"
 )
@@ -120,7 +121,7 @@ Examples:
 
 var scheduleShowCmd = &cobra.Command{
 	Use:   "show",
-	Short: "Show the current schedule, directory, and status",
+	Short: "Show the current schedule, directory, status, and last run",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		info, err := schedule.Show()
@@ -128,9 +129,18 @@ var scheduleShowCmd = &cobra.Command{
 			return err
 		}
 
+		lastRun, err := schedule.ReadLastRun()
+		if err != nil {
+			return err
+		}
+
 		format := output.Resolve(cmd)
 		if output.IsJSON(format) {
-			return output.PrintJSON(info)
+			payload := struct {
+				*schedule.Info
+				LastRun *schedule.LastRun `json:"last_run,omitempty"`
+			}{Info: info, LastRun: lastRun}
+			return output.PrintJSON(payload)
 		}
 
 		loaded := "no"
@@ -146,6 +156,37 @@ var scheduleShowCmd = &cobra.Command{
 		}
 		fmt.Printf("Loaded:    %s\n", loaded)
 		fmt.Printf("Logs:      %s\n", info.StdoutLog)
+
+		fmt.Println()
+		fmt.Println("Last run:")
+		if lastRun == nil {
+			fmt.Println("  No runs yet.")
+			return nil
+		}
+
+		finished := lastRun.FinishedAt.Local()
+		if expected := schedule.ExpectedFireBefore(info, finished); !expected.IsZero() {
+			delay := finished.Sub(expected).Round(time.Second)
+			fmt.Printf("  Scheduled: %s\n", expected.Format("2006-01-02 3:04pm"))
+			fmt.Printf("  Finished:  %s (%s after scheduled)\n", finished.Format("2006-01-02 3:04:05pm"), delay)
+		} else {
+			fmt.Printf("  Finished:  %s\n", finished.Format("2006-01-02 3:04:05pm"))
+		}
+		fmt.Println()
+
+		if len(lastRun.Results) == 0 {
+			fmt.Println("  (log contains no per-repo results)")
+			return nil
+		}
+		t := table.New()
+		t.Header("Repo", "Status", "Detail")
+		t.WrapColumns(2)
+		for _, r := range lastRun.Results {
+			t.Row(r.Repo.RelPath, r.Status, r.Detail)
+		}
+		if err := t.Flush(); err != nil {
+			return fmt.Errorf("writing table output: %w", err)
+		}
 		return nil
 	},
 }
