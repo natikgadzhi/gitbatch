@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -152,6 +153,120 @@ func TestRun_NoStashSkipsDirty(t *testing.T) {
 	}
 	if results[0].Detail != "dirty worktree (--no-stash)" {
 		t.Errorf("expected detail about --no-stash, got %s", results[0].Detail)
+	}
+}
+
+func TestRun_UntrackedOnlyDoesNotFailOnStashPop(t *testing.T) {
+	clone, _ := initRepoWithRemote(t)
+	// Untracked files make IsDirty report true but git stash push
+	// without --include-untracked is a no-op. Previously this tripped
+	// the "No stash entries found" path on the pop.
+	writeFile(t, filepath.Join(clone, "leftover.txt"), "leftover\n")
+
+	repos := []git.Repo{
+		{Path: clone, RelPath: "untracked-only"},
+	}
+
+	results := Run(context.Background(), repos, 2, false, nil)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Status != StatusOK {
+		t.Errorf("expected status OK, got %s (%s)", results[0].Status, results[0].Detail)
+	}
+}
+
+func TestRun_MissingRemoteBranchSkipped(t *testing.T) {
+	clone, _ := initRepoWithRemote(t)
+
+	// Check out a fresh local branch whose name has no counterpart on
+	// origin — the classic "feature branch merged and deleted remotely"
+	// shape. Without upstream tracking configured, the old behavior
+	// would fetch "origin/<localbranch>" and FAIL; new behavior is to
+	// SKIP with a clear detail.
+	run(t, clone, "git", "checkout", "-b", "dangling-local")
+
+	repos := []git.Repo{
+		{Path: clone, RelPath: "dangling"},
+	}
+	results := Run(context.Background(), repos, 2, false, nil)
+	if results[0].Status != StatusSkipped {
+		t.Errorf("expected SKIPPED for missing remote ref, got %s (%s)", results[0].Status, results[0].Detail)
+	}
+}
+
+func TestRun_LocalBranchTracksDifferentRemoteName(t *testing.T) {
+	clone, bare := initRepoWithRemote(t)
+
+	defaultBranch, err := git.CurrentBranch(clone)
+	if err != nil {
+		t.Fatalf("getting branch: %v", err)
+	}
+	// Push a new commit to origin's default branch.
+	clone2 := t.TempDir()
+	os.RemoveAll(clone2)
+	run(t, "", "git", "clone", bare, clone2)
+	run(t, clone2, "git", "config", "user.email", "test@test.com")
+	run(t, clone2, "git", "config", "user.name", "Test")
+	writeFile(t, filepath.Join(clone2, "new.txt"), "new content\n")
+	run(t, clone2, "git", "add", ".")
+	run(t, clone2, "git", "commit", "-m", "new commit")
+	run(t, clone2, "git", "push", "origin", defaultBranch)
+
+	// Create a local branch named "feature" that tracks the default
+	// branch on origin. Before the upstream-aware fix this would try to
+	// fetch origin/feature and fail.
+	run(t, clone, "git", "checkout", "-b", "feature", "--track", "origin/"+defaultBranch)
+
+	repos := []git.Repo{
+		{Path: clone, RelPath: "differently-named"},
+	}
+	results := Run(context.Background(), repos, 2, false, nil)
+	if results[0].Status != StatusUpdated {
+		t.Errorf("expected UPDATED, got %s (%s)", results[0].Status, results[0].Detail)
+	}
+	if !strings.Contains(results[0].Detail, "origin/"+defaultBranch) {
+		t.Errorf("expected detail to reference origin/%s, got %q", defaultBranch, results[0].Detail)
+	}
+}
+
+func TestRun_UntrackedWouldBeOverwrittenRecovers(t *testing.T) {
+	clone, bare := initRepoWithRemote(t)
+
+	branch, err := git.CurrentBranch(clone)
+	if err != nil {
+		t.Fatalf("getting branch: %v", err)
+	}
+
+	// Push a commit to origin that adds file "collide.txt".
+	clone2 := t.TempDir()
+	os.RemoveAll(clone2)
+	run(t, "", "git", "clone", bare, clone2)
+	run(t, clone2, "git", "config", "user.email", "test@test.com")
+	run(t, clone2, "git", "config", "user.name", "Test")
+	writeFile(t, filepath.Join(clone2, "collide.txt"), "from remote\n")
+	run(t, clone2, "git", "add", ".")
+	run(t, clone2, "git", "commit", "-m", "add collide.txt")
+	run(t, clone2, "git", "push", "origin", branch)
+
+	// In the original clone, create the same filename as an untracked file —
+	// this blocks the FF merge with "untracked working tree files would be
+	// overwritten". Runner should stash --include-untracked, merge, then pop.
+	writeFile(t, filepath.Join(clone, "collide.txt"), "local untracked\n")
+
+	repos := []git.Repo{
+		{Path: clone, RelPath: "untracked-collide"},
+	}
+	results := Run(context.Background(), repos, 1, false, nil)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	// Recovery stashes -u -> merges cleanly -> pop fails because the
+	// stashed untracked file collides with the now-tracked path. The
+	// stash is preserved and the repo is reported as CONFLICT so the
+	// user can resolve manually.
+	if results[0].Status != StatusConflict {
+		t.Errorf("expected CONFLICT, got %s (%s)", results[0].Status, results[0].Detail)
 	}
 }
 
