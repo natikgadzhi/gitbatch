@@ -71,14 +71,17 @@ func buildPlist(cfg Config) string {
 
 // Info holds parsed schedule information for display.
 type Info struct {
-	Label     string   `json:"label"`
-	Binary    string   `json:"binary"`
-	Directory string   `json:"directory"`
-	SyncArgs  []string `json:"sync_args,omitempty"`
-	Schedule  string   `json:"schedule"`
-	StdoutLog string   `json:"stdout_log"`
-	StderrLog string   `json:"stderr_log"`
-	Loaded    bool     `json:"loaded"`
+	Label           string   `json:"label"`
+	Binary          string   `json:"binary"`
+	Directory       string   `json:"directory"`
+	SyncArgs        []string `json:"sync_args,omitempty"`
+	Schedule        string   `json:"schedule"`
+	Hour            *int     `json:"hour,omitempty"`
+	Minute          *int     `json:"minute,omitempty"`
+	IntervalSeconds *int     `json:"interval_seconds,omitempty"`
+	StdoutLog       string   `json:"stdout_log"`
+	StderrLog       string   `json:"stderr_log"`
+	Loaded          bool     `json:"loaded"`
 }
 
 func plistPath() string {
@@ -175,6 +178,7 @@ func Show() (*Info, error) {
 
 	content := string(data)
 	progArgs := extractProgramArguments(content)
+	hour, minute, interval := extractScheduleValues(content)
 	info := &Info{
 		Label:     label,
 		Binary:    progArgs.binary,
@@ -185,8 +189,45 @@ func Show() (*Info, error) {
 		StderrLog: StderrLogPath(),
 		Loaded:    isLoaded(),
 	}
+	if hour >= 0 && minute >= 0 {
+		info.Hour = &hour
+		info.Minute = &minute
+	}
+	if interval > 0 {
+		info.IntervalSeconds = &interval
+	}
 
 	return info, nil
+}
+
+// extractScheduleValues returns (hour, minute, intervalSeconds). Hour and
+// minute are -1 when the schedule is interval-based; interval is 0 when
+// daily.
+func extractScheduleValues(content string) (int, int, int) {
+	hour, minute, interval := -1, -1, 0
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "<key>StartInterval</key>" && i+1 < len(lines) {
+			val := strings.TrimSpace(lines[i+1])
+			val = strings.TrimPrefix(val, "<integer>")
+			val = strings.TrimSuffix(val, "</integer>")
+			fmt.Sscanf(val, "%d", &interval)
+		}
+		if trimmed == "<key>Hour</key>" && i+1 < len(lines) {
+			val := strings.TrimSpace(lines[i+1])
+			val = strings.TrimPrefix(val, "<integer>")
+			val = strings.TrimSuffix(val, "</integer>")
+			fmt.Sscanf(val, "%d", &hour)
+		}
+		if trimmed == "<key>Minute</key>" && i+1 < len(lines) {
+			val := strings.TrimSpace(lines[i+1])
+			val = strings.TrimPrefix(val, "<integer>")
+			val = strings.TrimSuffix(val, "</integer>")
+			fmt.Sscanf(val, "%d", &minute)
+		}
+	}
+	return hour, minute, interval
 }
 
 func load() error {

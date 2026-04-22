@@ -72,6 +72,8 @@ gitbatch schedule logs
 
 **Sleep/wake behavior:** The schedule uses macOS launchd, which catches up on missed runs. If your laptop is asleep at the scheduled time, the sync runs automatically when you open the lid.
 
+`gitbatch schedule show` prints the current schedule plus a summary of the last run — scheduled time, actual start/finish, and a per-repo results table — so you can verify overnight syncs succeeded.
+
 ### Examples
 
 ```bash

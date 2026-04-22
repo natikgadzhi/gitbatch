@@ -1,10 +1,12 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // initRepo creates a new git repo in a temp directory with one commit.
@@ -205,6 +207,169 @@ func TestMergeFF_AlreadyUpToDate(t *testing.T) {
 	}
 }
 
+func TestBranchUpstream_Configured(t *testing.T) {
+	clone, _ := initRepoWithRemote(t)
+	branch, err := CurrentBranch(clone)
+	if err != nil {
+		t.Fatalf("getting branch: %v", err)
+	}
+
+	remote, remoteBranch, err := BranchUpstream(clone, branch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if remote != "origin" {
+		t.Errorf("expected remote=origin, got %q", remote)
+	}
+	if remoteBranch != branch {
+		t.Errorf("expected remoteBranch=%q, got %q", branch, remoteBranch)
+	}
+}
+
+func TestBranchUpstream_NotConfigured(t *testing.T) {
+	repo := initRepo(t) // no remote, no tracking config
+	branch, err := CurrentBranch(repo)
+	if err != nil {
+		t.Fatalf("getting branch: %v", err)
+	}
+
+	remote, remoteBranch, err := BranchUpstream(repo, branch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if remote != "" || remoteBranch != "" {
+		t.Errorf("expected empty upstream for unconfigured branch, got (%q, %q)", remote, remoteBranch)
+	}
+}
+
+func TestBranchUpstream_DifferentRemoteBranchName(t *testing.T) {
+	clone, bare := initRepoWithRemote(t)
+
+	branch, err := CurrentBranch(clone)
+	if err != nil {
+		t.Fatalf("getting branch: %v", err)
+	}
+	// Create a local branch that tracks origin/<default branch> but has a
+	// different local name. This is the scenario that previously tripped
+	// gitbatch: local name != remote name.
+	run(t, clone, "git", "checkout", "-b", "local-feature", "--track", "origin/"+branch)
+	_ = bare
+
+	remote, remoteBranch, err := BranchUpstream(clone, "local-feature")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if remote != "origin" {
+		t.Errorf("expected origin, got %q", remote)
+	}
+	if remoteBranch != branch {
+		t.Errorf("expected remote branch %q, got %q", branch, remoteBranch)
+	}
+}
+
+func TestIsMissingRemoteRef(t *testing.T) {
+	clone, _ := initRepoWithRemote(t)
+	// Ask for a ref that certainly doesn't exist on origin.
+	err := Fetch(clone, "origin", "definitely-does-not-exist-branch")
+	if err == nil {
+		t.Fatal("expected fetch to fail for nonexistent remote ref")
+	}
+	if !IsMissingRemoteRef(err) {
+		t.Errorf("IsMissingRemoteRef should classify %q as missing-ref", err.Error())
+	}
+}
+
+func TestStashPush_UntrackedOnlyReturnsFalse(t *testing.T) {
+	repo := initRepo(t)
+	// Untracked file — `git status --porcelain` reports it but plain
+	// `git stash push` ignores it and creates no stash entry.
+	writeFile(t, filepath.Join(repo, "new-untracked.txt"), "untracked content\n")
+
+	stashed, err := StashPush(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stashed {
+		t.Error("expected stashed=false when only untracked files are present")
+	}
+}
+
+func TestClassifiers(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		network bool
+		auth    bool
+		missing bool
+		untrack bool
+	}{
+		{"nil", nil, false, false, false, false},
+		{"kex", errors.New("kex_exchange_identification: Connection closed by remote"), true, false, false, false},
+		{"timeout", errors.New("ssh: connect: Operation timed out"), true, false, false, false},
+		{"early-eof", errors.New("fatal: the remote end hung up unexpectedly\nfatal: early EOF"), true, false, false, false},
+		{"publickey", errors.New("git@github.com: Permission denied (publickey)"), false, true, false, false},
+		{"auth-failed", errors.New("remote: HTTP Basic: Access denied\nfatal: Authentication failed"), false, true, false, false},
+		{"missing-ref", errors.New("fatal: couldn't find remote ref refs/heads/gone"), false, false, true, false},
+		{"untracked", errors.New("error: The following untracked working tree files would be overwritten by merge:\n\tfoo"), false, false, false, true},
+		{"other", errors.New("fatal: not a git repository"), false, false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsNetworkError(tc.err); got != tc.network {
+				t.Errorf("IsNetworkError = %v, want %v", got, tc.network)
+			}
+			if got := IsAuthError(tc.err); got != tc.auth {
+				t.Errorf("IsAuthError = %v, want %v", got, tc.auth)
+			}
+			if got := IsMissingRemoteRef(tc.err); got != tc.missing {
+				t.Errorf("IsMissingRemoteRef = %v, want %v", got, tc.missing)
+			}
+			if got := IsUntrackedWouldBeOverwritten(tc.err); got != tc.untrack {
+				t.Errorf("IsUntrackedWouldBeOverwritten = %v, want %v", got, tc.untrack)
+			}
+		})
+	}
+}
+
+func TestSummarize(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"network", errors.New("kex_exchange_identification: Connection closed"), "network error"},
+		{"auth", errors.New("Permission denied (publickey)"), "authentication failed"},
+		{"missing", errors.New("fatal: couldn't find remote ref foo"), "remote ref missing"},
+		{"untracked", errors.New("error: The following untracked working tree files would be overwritten by merge"), "untracked files would be overwritten"},
+		{"fatal-line", errors.New("some prefix\nfatal: not a git repository\nmore output"), "not a git repository"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Summarize(tc.err); got != tc.want {
+				t.Errorf("Summarize = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFetchWithRetry_RetriesNetworkErrors(t *testing.T) {
+	// Replace backoff with near-zero delay so the test is fast.
+	orig := retryBackoff
+	retryBackoff = func(int) time.Duration { return time.Millisecond }
+	defer func() { retryBackoff = orig }()
+
+	clone, _ := initRepoWithRemote(t)
+	// A nonexistent remote will fail with a non-network error — should return
+	// after one attempt without retrying.
+	err := FetchWithRetry(clone, "no-such-remote", "main", 3)
+	if err == nil {
+		t.Fatal("expected error for nonexistent remote")
+	}
+	if IsNetworkError(err) {
+		t.Errorf("did not expect a network error, got %v", err)
+	}
+}
+
 func TestStashPushPop_RoundTrip(t *testing.T) {
 	repo := initRepo(t)
 
@@ -221,9 +386,12 @@ func TestStashPushPop_RoundTrip(t *testing.T) {
 	}
 
 	// Stash.
-	err = StashPush(repo)
+	stashed, err := StashPush(repo)
 	if err != nil {
 		t.Fatalf("stash push error: %v", err)
+	}
+	if !stashed {
+		t.Fatal("expected stash push to report stashed=true for tracked changes")
 	}
 
 	dirty, err = IsDirty(repo)

@@ -97,9 +97,10 @@ Examples:
 			}
 		} else {
 			t := table.New()
-			t.Header("Repo", "Branch", "Status", "Detail")
+			t.Header("Repo", "Status", "Detail")
+			t.WrapColumns(2)
 			for _, r := range results {
-				t.Row(r.Repo.RelPath, r.Branch, r.Status, r.Detail)
+				t.Row(r.Repo.RelPath, r.Status, r.Detail)
 			}
 			if err := t.Flush(); err != nil {
 				return fmt.Errorf("writing table output: %w", err)
